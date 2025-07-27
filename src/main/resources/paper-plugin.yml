@@ -1,0 +1,7 @@
+name: WildTag
+version: ${version}
+main: me.lukiiy.wildTag.WildTag
+api-version: '1.21'
+authors: [ Lukiiy ]
+description: A tag minigame, but using random parts of the world as the map.
+folia-supported: true
