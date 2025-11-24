@@ -19,6 +19,7 @@ public final class WildTag extends JavaPlugin {
     public void onEnable() {
         setupConfig();
         getServer().getPluginManager().registerEvents(new Listen(), this);
+
         getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS, it -> it.registrar().register(Cmd.INSTANCE.register(), "WildTag main command"));
     }
 
@@ -77,4 +78,14 @@ public final class WildTag extends JavaPlugin {
     public void endAll() {
         for (Match match : new ArrayList<>(activeMatches.values())) match.end();
     }
+
+    public static boolean isFolia() {
+        try {
+            Class.forName("io.papermc.paper.threadedregions.RegionizedServer");
+            return true;
+        } catch (ClassNotFoundException e) {
+            return false;
+        }
+    }
+
 }

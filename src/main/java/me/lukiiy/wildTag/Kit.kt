@@ -1,6 +1,6 @@
 package me.lukiiy.wildTag
 
-import org.bukkit.Material
+import io.papermc.paper.datacomponent.DataComponentTypes
 import org.bukkit.NamespacedKey
 import org.bukkit.inventory.ItemFlag
 import org.bukkit.inventory.ItemStack
@@ -14,11 +14,11 @@ class Kit(vararg items: ItemStack) {
 
     init {
         items.forEach {
-            it.itemMeta = it.itemMeta.apply {
-                persistentDataContainer.set(KEY, PersistentDataType.INTEGER, 1)
-                if (it.type == Material.COMPASS) setEnchantmentGlintOverride(false)
-                addItemFlags(ItemFlag.HIDE_ENCHANTS, ItemFlag.HIDE_ARMOR_TRIM, ItemFlag.HIDE_ATTRIBUTES)
-                isUnbreakable = true
+            it.apply {
+                setData(DataComponentTypes.ENCHANTMENT_GLINT_OVERRIDE, false)
+                setData(DataComponentTypes.UNBREAKABLE)
+                addItemFlags(ItemFlag.HIDE_ENCHANTS, ItemFlag.HIDE_ARMOR_TRIM, ItemFlag.HIDE_ATTRIBUTES, ItemFlag.HIDE_UNBREAKABLE)
+                editPersistentDataContainer { d -> d.set(KEY, PersistentDataType.INTEGER, 1) }
             }
 
             this.items.add(it)
@@ -33,11 +33,6 @@ class Kit(vararg items: ItemStack) {
         val KEY: NamespacedKey = NamespacedKey(WildTag.getInstance(), "k")
 
         @JvmStatic
-        fun isKitItem(item: ItemStack): Boolean {
-            val m = item.itemMeta
-            if (m == null) return false
-
-            return m.persistentDataContainer.has(KEY, PersistentDataType.INTEGER)
-        }
+        fun isKitItem(item: ItemStack): Boolean = item.persistentDataContainer.has(KEY, PersistentDataType.INTEGER)
     }
 }

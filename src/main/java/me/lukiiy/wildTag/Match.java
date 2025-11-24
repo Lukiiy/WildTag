@@ -1,12 +1,16 @@
 package me.lukiiy.wildTag;
 
+import io.papermc.paper.datacomponent.DataComponentTypes;
+import io.papermc.paper.datacomponent.item.LodestoneTracker;
 import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
+import me.lukiiy.wayTrick.WayTrick;
 import net.kyori.adventure.bossbar.BossBar;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.JoinConfiguration;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextColor;
 import net.kyori.adventure.text.format.TextDecoration;
+import net.minecraft.world.waypoints.Waypoint;
 import org.bukkit.*;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
@@ -16,13 +20,13 @@ import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.PlayerInventory;
-import org.bukkit.inventory.meta.CompassMeta;
-import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.util.Vector;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class Match {
     public final Map<Player, Teams> players = new HashMap<>();
@@ -34,7 +38,10 @@ public class Match {
 
     private final Location ogCenter;
     private final double ogSize;
-    private final ScheduledTask task;
+    private ScheduledTask task;
+
+    private final WayTrick fakeLocators = new WayTrick();
+    private final boolean originalLocatorRule;
 
     private static final Kit defaultKit = new Kit(ItemStack.of(Material.DIAMOND_PICKAXE), ItemStack.of(Material.DIAMOND_AXE), ItemStack.of(Material.DIAMOND_SHOVEL), ItemStack.of(Material.COBBLESTONE, 16));
     private static final Kit hunterKit = new Kit(getTracker());
@@ -43,12 +50,16 @@ public class Match {
         WildTag tag = WildTag.getInstance();
 
         this.world = world;
-        for (Player p : world.getPlayers()) this.players.put(p, Teams.RUNNER);
+        for (Player p : players) this.players.put(p, Teams.RUNNER);
 
-        if (hunters == null || getHunters().isEmpty()) this.players.put(players.get(tag.rng.nextInt(players.size())), Teams.HUNTER);
-        else hunters.forEach(h -> this.players.put(h, Teams.HUNTER));
+        if (hunters == null || hunters.isEmpty()) {
+            this.players.put(players.get(tag.rng.nextInt(players.size())), Teams.HUNTER);
+        } else {
+            hunters.forEach(h -> this.players.put(h, Teams.HUNTER));
+        }
 
         WorldBorder border = world.getWorldBorder();
+
         this.ogCenter = border.getCenter();
         this.ogSize = border.getSize();
 
@@ -60,21 +71,47 @@ public class Match {
         this.center = center == null ? tag.randomLocation(world) : center;
 
         List<Location> spawns = getSpawns(this.center, size, players.size());
+        AtomicInteger ready = new AtomicInteger(0);
+
+        originalLocatorRule = Boolean.TRUE.equals(world.getGameRuleValue(GameRule.LOCATOR_BAR));
+        if (WildTag.isFolia()) {
+            Bukkit.getGlobalRegionScheduler().execute(WildTag.getInstance(), () -> world.setGameRule(GameRule.LOCATOR_BAR, false));
+        } else {
+            world.setGameRule(GameRule.LOCATOR_BAR, false);
+        }
+
         for (int i = 0; i < players.size(); i++) {
             Player p = players.get(i);
+            Location spawn = spawns.get(i);
 
-            p.teleportAsync(spawns.get(i));
+            p.teleportAsync(spawn).thenAccept(success -> {
+                if (!success) return;
+
+                p.sendActionBar(Component.text("Preparing terrain..."));
+                isChunkReady(spawn).thenRun(() -> {
+                    if (ready.incrementAndGet() == players.size()) start(players, size);
+                });
+            });
+        }
+    }
+
+    public void start(List<Player> players, double size) {
+        WorldBorder border = world.getWorldBorder();
+
+        border.setCenter(this.center);
+        border.setSize(size);
+
+        for (Player p : players) {
             preparePlayer(p);
             bar.addViewer(p);
             p.playSound(p, Sound.ENTITY_EXPERIENCE_ORB_PICKUP, .5f, 1);
         }
 
-        border.setCenter(this.center);
-        border.setSize(size);
+        setupWaypoints();
 
         task = Bukkit.getGlobalRegionScheduler().runAtFixedRate(WildTag.getInstance(), (task) -> {
             if (timer == 0) {
-                end(getRunners());
+                end(getPlayers(Teams.RUNNER));
                 return;
             }
 
@@ -96,12 +133,15 @@ public class Match {
             bar.progress((float) timer / timerFull);
 
             for (Player p : players) {
-                if (getHunters().contains(p)) {
+                if (getPlayers(Teams.HUNTER).contains(p)) {
                     Component text = Component.text("Catch them all!").color(TextColor.color(0xFFA1B7));
                     if (timer > timerFull - 5) text = Component.text("Remember to use the compass!").color(TextColor.color(0xFF8257));
+
                     p.sendActionBar(text);
-                } else p.sendActionBar(Component.text("Run away from ").append(Component.join(JoinConfiguration.commas(true), getHunters().stream().map(Player::name).toList())));
+                } else p.sendActionBar(Component.text("Run away from ").append(Component.join(JoinConfiguration.commas(true), getPlayers(Teams.HUNTER).stream().map(Player::name).toList())));
             }
+
+            fakeLocators.updateAll();
         }, 1L, 20L);
     }
 
@@ -110,21 +150,33 @@ public class Match {
         if (task != null && !task.isCancelled()) task.cancel();
 
         WorldBorder border = world.getWorldBorder();
+
         border.setCenter(ogCenter);
         border.setSize(ogSize);
 
-        world.getPlayers().forEach(p -> {
+        fakeLocators.clear();
+
+        if (WildTag.isFolia()) {
+            Bukkit.getGlobalRegionScheduler().execute(WildTag.getInstance(), () -> world.setGameRule(GameRule.LOCATOR_BAR, originalLocatorRule));
+        } else {
+            world.setGameRule(GameRule.LOCATOR_BAR, originalLocatorRule);
+        }
+
+        List<Player> players = new ArrayList<>(world.getPlayers());
+        players.forEach(p -> {
             bar.removeViewer(p);
-            if (getHunters().contains(p)) p.getInventory().remove(Material.COMPASS);
+            if (getPlayers(Teams.HUNTER).contains(p)) p.getInventory().remove(Material.COMPASS);
 
             if (winners == null || winners.isEmpty()) p.sendMessage(Component.text("Nobody won...").color(TextColor.color(0xA81F2F)).decorate(TextDecoration.ITALIC));
             else {
                 Component list = Component.join(JoinConfiguration.separator(Component.text(", ")), winners.stream().map(Player::name).toList());
+
                 p.sendMessage(list.append(Component.text(" won!").color(TextColor.color(0xFFF53)).decorate(TextDecoration.BOLD)));
             }
 
             if (p.getGameMode() == GameMode.SPECTATOR) {
                 Location pLoc = p.getLocation();
+
                 p.teleportAsync(new Location(world, pLoc.getX(), world.getHighestBlockYAt(pLoc.getBlockX(), pLoc.getBlockZ()) + 1, pLoc.getZ()));
                 p.setGameMode(GameMode.SURVIVAL);
             }
@@ -138,24 +190,27 @@ public class Match {
         end(Collections.emptyList());
     }
 
-    public void end(Player p) {
-        end(Collections.singletonList(p));
-    }
-
     public void eliminate(Player p) {
-        if (players.size() < 3 || getHunters().contains(p)) {
-            end(getRunners());
+        players.put(p, Teams.SPECTATOR);
+        fakeLocators.untrackTarget(p);
+
+        if (getPlayers(Teams.RUNNER).isEmpty()) {
+            end(getPlayers(Teams.HUNTER));
+            return;
+        }
+
+        if (getPlayers(Teams.HUNTER).isEmpty()) {
+            end(getPlayers(Teams.RUNNER));
             return;
         }
 
         uncastInfo(p);
-        players.put(p, Teams.SPECTATOR);
     }
 
     public void castInfo(Player p) {
         p.sendMessage(Component.newline());
-        p.sendMessage(Component.text("Runners: ").color(NamedTextColor.YELLOW).append(Component.join(JoinConfiguration.commas(true), getRunners().stream().map(Player::displayName).toList())));
-        p.sendMessage(Component.text("Hunter: ").color(NamedTextColor.YELLOW).append(Component.join(JoinConfiguration.commas(true), getHunters().stream().map(Player::displayName).toList())));
+        p.sendMessage(Component.text("Runners: ").color(NamedTextColor.YELLOW).append(Component.join(JoinConfiguration.commas(true), getPlayers(Teams.RUNNER).stream().map(Player::displayName).toList())));
+        p.sendMessage(Component.text("Hunter: ").color(NamedTextColor.YELLOW).append(Component.join(JoinConfiguration.commas(true), getPlayers(Teams.HUNTER).stream().map(Player::displayName).toList())));
         p.sendMessage(Component.newline());
         bar.addViewer(p);
     }
@@ -164,18 +219,14 @@ public class Match {
         bar.removeViewer(p);
     }
 
-    public List<Player> getRunners() {
-        return players.entrySet().stream().filter(entry -> entry.getValue() == Teams.RUNNER).map(Map.Entry::getKey).filter(Player::isOnline).toList();
-    }
-
-    public List<Player> getHunters() {
-        return players.entrySet().stream().filter(entry -> entry.getValue() == Teams.HUNTER).map(Map.Entry::getKey).filter(Player::isOnline).toList();
+    public List<Player> getPlayers(Teams team) {
+        return players.entrySet().stream().filter(entry -> entry.getValue() == team).map(Map.Entry::getKey).filter(Player::isOnline).toList();
     }
 
     private static List<Location> getSpawns(Location center, double borderSize, int pSize) { // TODO
         if (center == null || center.getWorld() == null) return List.of();
-        List<Location> pos = new ArrayList<>();
 
+        List<Location> pos = new ArrayList<>();
         World world = center.getWorld();
         double radius = (borderSize / 2) - 8;
         int minY = world.getMinHeight();
@@ -246,13 +297,8 @@ public class Match {
     private static ItemStack getTracker() {
         ItemStack compass = ItemStack.of(Material.COMPASS);
 
-        ItemMeta meta = compass.getItemMeta();
-        if (meta != null) {
-            meta.itemName(Component.text("Tracker"));
-            meta.setEnchantmentGlintOverride(false);
-            compass.setItemMeta(meta);
-        }
-
+        compass.setData(DataComponentTypes.CUSTOM_NAME, Component.text("Tracker").decoration(TextDecoration.ITALIC, TextDecoration.State.FALSE));
+        compass.setData(DataComponentTypes.ENCHANTMENT_GLINT_OVERRIDE, false);
         return compass;
     }
 
@@ -282,28 +328,36 @@ public class Match {
 
         pInv.clear();
         defaultKit.apply(pInv);
-        if (getHunters().contains(p)) hunterKit.apply(pInv);
+        if (getPlayers(Teams.HUNTER).contains(p)) hunterKit.apply(pInv);
 
-        getHunters().forEach(hunter -> hunter.getScheduler().run(WildTag.getInstance(), (task) -> getNearestRunner(hunter), null));
+        getPlayers(Teams.HUNTER).forEach(hunter -> hunter.getScheduler().run(WildTag.getInstance(), (task) -> getNearestRunner(hunter), null));
     }
 
     public Player getNearestRunner(Player p) {
-        Player nearest = getRunners().stream()
-                .filter(Entity::isValid)
-                .min(Comparator.comparingDouble(targets -> targets.getLocation().distanceSquared(p.getLocation())))
-                .orElse(null);
-
+        Player nearest = getPlayers(Teams.RUNNER).stream().filter(Entity::isValid).min(Comparator.comparingDouble(targets -> targets.getLocation().distanceSquared(p.getLocation()))).orElse(null);
         if (nearest == null) return null;
 
-        Arrays.stream(p.getInventory().getContents()).filter(Objects::nonNull).filter(item -> item.getType() == Material.COMPASS).forEach(compass -> {
-            CompassMeta meta = (CompassMeta) compass.getItemMeta();
-            meta.setLodestone(nearest.getLocation());
-            meta.setLodestoneTracked(false);
-
-            compass.setItemMeta(meta);
-        });
-
+        Arrays.stream(p.getInventory().getContents()).filter(Objects::nonNull).filter(item -> item.getType() == Material.COMPASS).forEach(compass -> compass.setData(DataComponentTypes.LODESTONE_TRACKER, LodestoneTracker.lodestoneTracker().location(nearest.getLocation()).tracked(false).build()));
         return nearest;
+    }
+
+    private void setupWaypoints() {
+        Waypoint.Icon runnerStyle = new Waypoint.Icon();
+        runnerStyle.color = Optional.of(0xFFFFFF);
+
+        getPlayers(Teams.HUNTER).forEach(fakeLocators::addViewer);
+        getPlayers(Teams.RUNNER).forEach(runner -> fakeLocators.trackTarget(runner, runnerStyle));
+    }
+
+    private CompletableFuture<Void> isChunkReady(Location location) {
+        if (location.getWorld() == null) return CompletableFuture.completedFuture(null);
+
+        Chunk chunk = location.getChunk();
+        if (chunk.isLoaded()) return CompletableFuture.completedFuture(null);
+
+        CompletableFuture<Void> future = new CompletableFuture<>();
+        chunk.getWorld().getChunkAtAsync(chunk.getX(), chunk.getZ(), true).thenAccept(c -> future.complete(null));
+        return future;
     }
 
     public enum Teams {

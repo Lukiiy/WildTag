@@ -17,6 +17,7 @@ import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
 import org.bukkit.World
 import org.bukkit.entity.Player
+import java.util.Collections
 
 
 object Cmd {
@@ -27,7 +28,7 @@ object Cmd {
     private val main = Commands.literal("wildtag")
         .requires { it.sender.hasPermission("wildtag.cmd") }
         .executes {
-            it.source.sender.sendMessage(Component.text("Use tab to go over the subcommands!").color(NamedTextColor.GRAY))
+            it.source.sender.sendMessage(Component.text("Available subcommands: start, reload, stop, timer").color(NamedTextColor.GRAY))
             Command.SINGLE_SUCCESS
         }
 
@@ -86,8 +87,9 @@ object Cmd {
 
         if (world.players.size < 2) throw SimpleCommandExceptionType(MessageComponentSerializer.message().serialize(Component.text("Not enough players to start a tag match").color(NamedTextColor.RED))).create()
         val finalTime = seconds ?: tag().config.getInt("defaultTimer", 120)
+        val finalHunters = hunters ?: Collections.emptyList()
 
-        tag().start(world.players, world, center?.toLocation(world), tag().config.getInt("mapArea", 128).toDouble(), finalTime.toLong(), hunters)
+        tag().start(world.players, world, center?.toLocation(world), tag().config.getInt("mapArea", 128).toDouble(), finalTime.toLong(), finalHunters)
         sender.sendMessage(Component.text("Starting a new match on ${world.name}").color(NamedTextColor.YELLOW))
         return Command.SINGLE_SUCCESS
     }
