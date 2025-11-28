@@ -4,8 +4,10 @@ import com.destroystokyo.paper.event.player.PlayerPostRespawnEvent;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextColor;
+import net.minecraft.SharedConstants;
 import org.bukkit.*;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.Projectile;
 import org.bukkit.event.Event;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -20,25 +22,43 @@ import java.util.List;
 public class Listen implements Listener {
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void hit(EntityDamageByEntityEvent e) {
-        if (e.getEntity() instanceof Player attacked && WildTag.getInstance().getMatch(attacked) != null && e.getDamager() instanceof Player damager) {
-            Match match = WildTag.getInstance().getMatch(attacked);
-            if (match == null) return;
+        if (!(e.getEntity() instanceof Player attacked)) return;
 
-            List<Player> runners = match.getPlayers(Match.Teams.RUNNER);
-            List<Player> hunters = match.getPlayers(Match.Teams.HUNTER);
+        Match match = WildTag.getInstance().getMatch(attacked);
+        if (match == null) return;
 
-            if (Kit.isKitItem(damager.getInventory().getItemInMainHand()) || runners.contains(damager)) e.setDamage(0);
+        Player damager = switch (e.getDamager()) {
+            case Player p -> p;
+            case Projectile proj when proj.getShooter() instanceof Player shooter -> shooter;
+            default -> null;
+        };
+        if (damager == null) return;
 
-            if (hunters.contains(damager) && runners.contains(attacked)) {
-                if (runners.size() == 1) {
-                    match.eliminate(attacked);
-                    return;
-                }
+        List<Player> runners = match.getPlayers(Match.Teams.RUNNER);
+        List<Player> hunters = match.getPlayers(Match.Teams.HUNTER);
 
-                e.setDamage(attacked.getHealth() + 1);
-                hunters.forEach(h -> h.getScheduler().run(WildTag.getInstance(), (task) -> match.getNearestRunner(h), null));
+        if (runners.contains(damager) || Kit.isKitItem(damager.getInventory().getItemInMainHand())) e.setDamage(0);
+
+        if (hunters.contains(damager) && runners.contains(attacked)) {
+            if (runners.size() == 1) {
+                match.eliminate(attacked);
+                return;
             }
+
+            e.setDamage(attacked.getHealth() + 1);
+            hunters.forEach(h -> h.getScheduler().run(WildTag.getInstance(), task -> match.getNearestRunner(h), null));
         }
+    }
+
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void projPickup(PlayerPickupArrowEvent e) {
+        if (!(e.getArrow().getShooter() instanceof Player shooter)) return;
+
+        Match match = WildTag.getInstance().getMatch(shooter);
+        if (match == null) return;
+
+        List<Player> hunters = match.getPlayers(Match.Teams.HUNTER);
+        if (hunters.contains(shooter) && !hunters.contains(e.getPlayer())) e.setCancelled(true);
     }
 
     @EventHandler
@@ -104,9 +124,11 @@ public class Listen implements Listener {
             return;
         }
 
-        if (e.hasBlock() && e.getClickedBlock() != null && e.getClickedBlock().getType() == Material.ENDER_CHEST) { // TODO: Update in 1.21.11
+        if (e.hasBlock() && e.getClickedBlock() != null && e.getClickedBlock().getType() == Material.ENDER_CHEST) {
             p.sendActionBar(Component.translatable("container.isLocked").arguments(Component.translatable("block.minecraft.ender_chest")));
-            p.playSound(p, Sound.BLOCK_CHEST_LOCKED, 1, 1);
+
+            if (SharedConstants.getProtocolVersion() > 773) p.getWorld().playSound(e.getClickedBlock().getLocation(), Sound.BLOCK_CHEST_LOCKED, 1, 1); else p.playSound(p, Sound.BLOCK_CHEST_LOCKED, 1, 1); // picky.
+
             e.setUseInteractedBlock(Event.Result.DENY);
         }
     }

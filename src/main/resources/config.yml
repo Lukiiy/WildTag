@@ -2,3 +2,6 @@ mapArea: 128
 defaultTimer: 120
 mapSearchRange: 4096
 morePlayerTimer: 60
+trackers:
+  compass: true
+  locatorBar: true

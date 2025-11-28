@@ -89,7 +89,12 @@ object Cmd {
         val finalTime = seconds ?: tag().config.getInt("defaultTimer", 120)
         val finalHunters = hunters ?: Collections.emptyList()
 
-        tag().start(world.players, world, center?.toLocation(world), tag().config.getInt("mapArea", 128).toDouble(), finalTime.toLong(), finalHunters)
+        try {
+            Match(world.players, world, center?.toLocation(world), tag().config.getInt("mapArea", 128).toDouble(), finalTime.toLong(), finalHunters)
+        } catch (e: IllegalArgumentException) {
+            throw SimpleCommandExceptionType(MessageComponentSerializer.message().serialize(Component.text("Could not start a match: ${e.message}").color(NamedTextColor.RED))).create()
+        }
+
         sender.sendMessage(Component.text("Starting a new match on ${world.name}").color(NamedTextColor.YELLOW))
         return Command.SINGLE_SUCCESS
     }
@@ -106,7 +111,7 @@ object Cmd {
                     val seconds = IntegerArgumentType.getInteger(it, "seconds").toLong()
 
                     match.timer += seconds
-                    sender.sendMessage(Component.text("${if (add) "Incremented" else "Decremented"} $seconds ${if (add) "to" else "from"} the match's timer."))
+                    sender.sendMessage(Component.text("${if (add) "Incremented" else "Decremented"} $seconds ${if (add) "to" else "from"} the match's timer.").color(NamedTextColor.YELLOW))
                     Command.SINGLE_SUCCESS
                 }
             )

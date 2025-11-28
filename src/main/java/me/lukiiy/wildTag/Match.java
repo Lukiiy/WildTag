@@ -10,6 +10,7 @@ import net.kyori.adventure.text.JoinConfiguration;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextColor;
 import net.kyori.adventure.text.format.TextDecoration;
+import net.minecraft.SharedConstants;
 import net.minecraft.world.waypoints.Waypoint;
 import org.bukkit.*;
 import org.bukkit.attribute.Attribute;
@@ -29,6 +30,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class Match {
+    private static final Map<World, Match> ACTIVE = new HashMap<>();
+
     public final Map<Player, Teams> players = new HashMap<>();
     private final long timerFull;
     public long timer;
@@ -40,14 +43,21 @@ public class Match {
     private final double ogSize;
     private ScheduledTask task;
 
-    private final WayTrick fakeLocators = new WayTrick();
-    private final boolean originalLocatorRule;
+    private WayTrick fakeLocators;
+    private boolean originalLocatorRule = false;
 
     private static final Kit defaultKit = new Kit(ItemStack.of(Material.DIAMOND_PICKAXE), ItemStack.of(Material.DIAMOND_AXE), ItemStack.of(Material.DIAMOND_SHOVEL), ItemStack.of(Material.COBBLESTONE, 16));
     private static final Kit hunterKit = new Kit(getTracker());
 
     Match(@NotNull List<Player> players, @NotNull World world, @Nullable Location center, double size, long seconds, @Nullable List<Player> hunters) {
+        if (players.size() < 2) throw new IllegalArgumentException("Not enough players to start a match.");
+        if (ACTIVE.containsKey(world)) throw new IllegalArgumentException("This world already has a running match.");
+        if (center != null && center.getWorld() != world) throw new IllegalArgumentException("The center is in another world.");
+
         WildTag tag = WildTag.getInstance();
+
+        ACTIVE.put(world, this);
+        tag.getComponentLogger().info(Component.text("Starting tag match on world " + world.getName() + "!").color(NamedTextColor.GOLD));
 
         this.world = world;
         for (Player p : players) this.players.put(p, Teams.RUNNER);
@@ -73,11 +83,14 @@ public class Match {
         List<Location> spawns = getSpawns(this.center, size, players.size());
         AtomicInteger ready = new AtomicInteger(0);
 
-        originalLocatorRule = Boolean.TRUE.equals(world.getGameRuleValue(GameRule.LOCATOR_BAR));
-        if (WildTag.isFolia()) {
-            Bukkit.getGlobalRegionScheduler().execute(WildTag.getInstance(), () -> world.setGameRule(GameRule.LOCATOR_BAR, false));
-        } else {
-            world.setGameRule(GameRule.LOCATOR_BAR, false);
+        if (SharedConstants.getProtocolVersion() >= 771) {
+            originalLocatorRule = Boolean.TRUE.equals(world.getGameRuleValue(GameRule.LOCATOR_BAR));
+
+            Bukkit.getGlobalRegionScheduler().execute(WildTag.getInstance(), () -> {
+                world.setGameRule(GameRule.LOCATOR_BAR, false);
+
+                if (WildTag.getInstance().getConfig().getBoolean("trackers.locatorBar")) fakeLocators = new WayTrick();
+            });
         }
 
         for (int i = 0; i < players.size(); i++) {
@@ -141,12 +154,12 @@ public class Match {
                 } else p.sendActionBar(Component.text("Run away from ").append(Component.join(JoinConfiguration.commas(true), getPlayers(Teams.HUNTER).stream().map(Player::name).toList())));
             }
 
-            fakeLocators.updateAll();
+            if (fakeLocators != null) fakeLocators.updateAll();
         }, 1L, 20L);
     }
 
     public void end(List<Player> winners) {
-        WildTag.getInstance().getMatches().remove(world);
+        ACTIVE.remove(world);
         if (task != null && !task.isCancelled()) task.cancel();
 
         WorldBorder border = world.getWorldBorder();
@@ -154,7 +167,7 @@ public class Match {
         border.setCenter(ogCenter);
         border.setSize(ogSize);
 
-        fakeLocators.clear();
+        if (WildTag.getInstance().getConfig().getBoolean("trackers.locatorBar") && fakeLocators != null) fakeLocators.clear();
 
         if (WildTag.isFolia()) {
             Bukkit.getGlobalRegionScheduler().execute(WildTag.getInstance(), () -> world.setGameRule(GameRule.LOCATOR_BAR, originalLocatorRule));
@@ -192,7 +205,7 @@ public class Match {
 
     public void eliminate(Player p) {
         players.put(p, Teams.SPECTATOR);
-        fakeLocators.untrackTarget(p);
+        if (fakeLocators != null) fakeLocators.untrackTarget(p);
 
         if (getPlayers(Teams.RUNNER).isEmpty()) {
             end(getPlayers(Teams.HUNTER));
@@ -288,6 +301,7 @@ public class Match {
                 y++;
                 b = b.getWorld().getBlockAt(b.getX(), y, b.getZ());
             }
+
             y--;
         }
 
@@ -295,6 +309,8 @@ public class Match {
     }
 
     private static ItemStack getTracker() {
+        if (!WildTag.getInstance().getConfig().getBoolean("trackers.compass")) return ItemStack.empty();
+
         ItemStack compass = ItemStack.of(Material.COMPASS);
 
         compass.setData(DataComponentTypes.CUSTOM_NAME, Component.text("Tracker").decoration(TextDecoration.ITALIC, TextDecoration.State.FALSE));
@@ -342,6 +358,8 @@ public class Match {
     }
 
     private void setupWaypoints() {
+        if (fakeLocators == null) return;
+
         Waypoint.Icon runnerStyle = new Waypoint.Icon();
         runnerStyle.color = Optional.of(0xFFFFFF);
 
@@ -362,5 +380,9 @@ public class Match {
 
     public enum Teams {
         RUNNER, HUNTER, SPECTATOR
+    }
+
+    public static Map<World, Match> getMatches() {
+        return Collections.unmodifiableMap(ACTIVE);
     }
 }

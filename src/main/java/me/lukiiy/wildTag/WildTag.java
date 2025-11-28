@@ -1,8 +1,6 @@
 package me.lukiiy.wildTag;
 
 import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents;
-import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.format.NamedTextColor;
 import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.entity.Player;
@@ -12,7 +10,6 @@ import java.util.*;
 import java.util.concurrent.ThreadLocalRandom;
 
 public final class WildTag extends JavaPlugin {
-    private final HashMap<World, Match> activeMatches = new HashMap<>();
     public final Random rng = ThreadLocalRandom.current();
 
     @Override
@@ -41,17 +38,7 @@ public final class WildTag extends JavaPlugin {
 
     // API
     public Map<World, Match> getMatches() {
-        return activeMatches;
-    }
-
-    public Match start(Collection<Player> players, World world, Location center, double size, long seconds, Collection<Player> hunters) {
-        if (players == null || players.isEmpty() || world == null || (center != null && center.getWorld() != world) || getMatch(world) != null) return null;
-
-        Match match = new Match(players.stream().toList(), world, center, size, seconds, hunters.stream().toList());
-
-        activeMatches.put(world, match);
-        getComponentLogger().info(Component.text("Starting tag match on world " + world.getName() + "!").color(NamedTextColor.GOLD));
-        return match;
+        return Match.getMatches();
     }
 
     public Match getMatch(World world) {
@@ -76,7 +63,7 @@ public final class WildTag extends JavaPlugin {
     }
 
     public void endAll() {
-        for (Match match : new ArrayList<>(activeMatches.values())) match.end();
+        Match.getMatches().values().forEach(Match::end);
     }
 
     public static boolean isFolia() {
@@ -87,5 +74,4 @@ public final class WildTag extends JavaPlugin {
             return false;
         }
     }
-
 }
