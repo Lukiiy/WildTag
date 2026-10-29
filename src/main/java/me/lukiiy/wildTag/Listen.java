@@ -4,7 +4,6 @@ import com.destroystokyo.paper.event.player.PlayerPostRespawnEvent;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextColor;
-import net.minecraft.SharedConstants;
 import org.bukkit.*;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Projectile;
@@ -127,7 +126,7 @@ public class Listen implements Listener {
         if (e.hasBlock() && e.getClickedBlock() != null && e.getClickedBlock().getType() == Material.ENDER_CHEST) {
             p.sendActionBar(Component.translatable("container.isLocked").arguments(Component.translatable("block.minecraft.ender_chest")));
 
-            if (SharedConstants.getProtocolVersion() > 773) p.getWorld().playSound(e.getClickedBlock().getLocation(), Sound.BLOCK_CHEST_LOCKED, 1, 1); else p.playSound(p, Sound.BLOCK_CHEST_LOCKED, 1, 1); // picky.
+            p.getWorld().playSound(e.getClickedBlock().getLocation(), Sound.BLOCK_CHEST_LOCKED, 1, 1);
 
             e.setUseInteractedBlock(Event.Result.DENY);
         }
