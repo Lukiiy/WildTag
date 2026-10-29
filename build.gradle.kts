@@ -1,7 +1,7 @@
 plugins {
     java
-    kotlin("jvm") version "2.2.0"
-    id("com.gradleup.shadow") version "9.0.0-beta12"
+    kotlin("jvm") version "2.3.21"
+    id("com.gradleup.shadow") version "9.4.1"
 }
 
 group = "me.lukiiy"
@@ -15,7 +15,7 @@ repositories {
 dependencies {
     compileOnly("io.papermc.paper:paper-api:26.1.2.build.+")
     implementation(kotlin("stdlib"))
-    implementation(files("lib/WayTrick-1.0.jar"))
+    implementation(files("lib/waytrick0.jar"))
 }
 
 java.toolchain.languageVersion.set(JavaLanguageVersion.of(25))
