@@ -3,15 +3,14 @@ package me.lukiiy.wildTag;
 import io.papermc.paper.datacomponent.DataComponentTypes;
 import io.papermc.paper.datacomponent.item.LodestoneTracker;
 import io.papermc.paper.threadedregions.scheduler.ScheduledTask;
-import me.lukiiy.wayTrick.WayTrick;
+import me.lukiiy.wayTrick.LocatorBar;
+import me.lukiiy.wayTrick.TrackedPoint;
 import net.kyori.adventure.bossbar.BossBar;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.JoinConfiguration;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextColor;
 import net.kyori.adventure.text.format.TextDecoration;
-import net.minecraft.SharedConstants;
-import net.minecraft.world.waypoints.Waypoint;
 import org.bukkit.*;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.attribute.AttributeInstance;
@@ -43,8 +42,9 @@ public class Match {
     private final double ogSize;
     private ScheduledTask task;
 
-    private WayTrick fakeLocators;
-    private boolean originalLocatorRule = false;
+    private LocatorBar locatorBar;
+    private final Map<UUID, TrackedPoint> runnerPoints = new HashMap<>();
+    private final boolean originalLocatorRule;
 
     private static final Kit defaultKit = new Kit(ItemStack.of(Material.DIAMOND_PICKAXE), ItemStack.of(Material.DIAMOND_AXE), ItemStack.of(Material.DIAMOND_SHOVEL), ItemStack.of(Material.COBBLESTONE, 16));
     private static final Kit hunterKit = new Kit(getTracker());
@@ -82,16 +82,13 @@ public class Match {
 
         List<Location> spawns = getSpawns(this.center, size, players.size());
         AtomicInteger ready = new AtomicInteger(0);
+        originalLocatorRule = world.getGameRuleValue(GameRules.LOCATOR_BAR);
 
-        if (SharedConstants.getProtocolVersion() >= 771) {
-            originalLocatorRule = Boolean.TRUE.equals(world.getGameRuleValue(GameRule.LOCATOR_BAR));
+        Bukkit.getGlobalRegionScheduler().execute(WildTag.getInstance(), () -> {
+            world.setGameRule(GameRules.LOCATOR_BAR, false);
 
-            Bukkit.getGlobalRegionScheduler().execute(WildTag.getInstance(), () -> {
-                world.setGameRule(GameRule.LOCATOR_BAR, false);
-
-                if (WildTag.getInstance().getConfig().getBoolean("trackers.locatorBar")) fakeLocators = new WayTrick();
-            });
-        }
+            if (WildTag.getInstance().getConfig().getBoolean("trackers.locatorBar")) locatorBar = new LocatorBar(WildTag.getInstance());
+        });
 
         for (int i = 0; i < players.size(); i++) {
             Player p = players.get(i);
@@ -122,7 +119,7 @@ public class Match {
 
         setupWaypoints();
 
-        task = Bukkit.getGlobalRegionScheduler().runAtFixedRate(WildTag.getInstance(), (task) -> {
+        task = Bukkit.getGlobalRegionScheduler().runAtFixedRate(WildTag.getInstance(), (_) -> {
             if (timer == 0) {
                 end(getPlayers(Teams.RUNNER));
                 return;
@@ -153,8 +150,6 @@ public class Match {
                     p.sendActionBar(text);
                 } else p.sendActionBar(Component.text("Run away from ").append(Component.join(JoinConfiguration.commas(true), getPlayers(Teams.HUNTER).stream().map(Player::name).toList())));
             }
-
-            if (fakeLocators != null) fakeLocators.updateAll();
         }, 1L, 20L);
     }
 
@@ -167,12 +162,18 @@ public class Match {
         border.setCenter(ogCenter);
         border.setSize(ogSize);
 
-        if (WildTag.getInstance().getConfig().getBoolean("trackers.locatorBar") && fakeLocators != null) fakeLocators.clear();
+        if (locatorBar != null) {
+            locatorBar.close();
+
+            locatorBar = null;
+        }
+
+        runnerPoints.clear();
 
         if (WildTag.isFolia()) {
-            Bukkit.getGlobalRegionScheduler().execute(WildTag.getInstance(), () -> world.setGameRule(GameRule.LOCATOR_BAR, originalLocatorRule));
+            Bukkit.getGlobalRegionScheduler().execute(WildTag.getInstance(), () -> world.setGameRule(GameRules.LOCATOR_BAR, originalLocatorRule));
         } else {
-            world.setGameRule(GameRule.LOCATOR_BAR, originalLocatorRule);
+            world.setGameRule(GameRules.LOCATOR_BAR, originalLocatorRule);
         }
 
         List<Player> players = new ArrayList<>(world.getPlayers());
@@ -205,7 +206,9 @@ public class Match {
 
     public void eliminate(Player p) {
         players.put(p, Teams.SPECTATOR);
-        if (fakeLocators != null) fakeLocators.untrackTarget(p);
+
+        TrackedPoint waypoint = runnerPoints.remove(p.getUniqueId());
+        if (waypoint != null) waypoint.remove();
 
         if (getPlayers(Teams.RUNNER).isEmpty()) {
             end(getPlayers(Teams.HUNTER));
@@ -358,13 +361,17 @@ public class Match {
     }
 
     private void setupWaypoints() {
-        if (fakeLocators == null) return;
+        if (!WildTag.getInstance().getConfig().getBoolean("trackers.locatorBar")) return;
 
-        Waypoint.Icon runnerStyle = new Waypoint.Icon();
-        runnerStyle.color = Optional.of(0xFFFFFF);
+        locatorBar = new LocatorBar(WildTag.getInstance());
 
-        getPlayers(Teams.HUNTER).forEach(fakeLocators::addViewer);
-        getPlayers(Teams.RUNNER).forEach(runner -> fakeLocators.trackTarget(runner, runnerStyle));
+        getPlayers(Teams.HUNTER).forEach(locatorBar::showTo);
+        getPlayers(Teams.RUNNER).forEach(runner -> {
+            TrackedPoint waypoint = locatorBar.track(runner).color(Color.WHITE);
+
+            runnerPoints.put(runner.getUniqueId(), waypoint);
+            waypoint.showToAll();
+        });
     }
 
     private CompletableFuture<Void> isChunkReady(Location location) {
