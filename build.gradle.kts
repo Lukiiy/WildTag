@@ -1,7 +1,6 @@
 plugins {
     java
     kotlin("jvm") version "2.2.0"
-    id("io.papermc.paperweight.userdev") version "2.0.0-beta.19"
     id("com.gradleup.shadow") version "9.0.0-beta12"
 }
 
@@ -14,10 +13,12 @@ repositories {
 }
 
 dependencies {
-    paperweight.paperDevBundle("1.21.6-R0.1-SNAPSHOT")
+    compileOnly("io.papermc.paper:paper-api:26.1.2.build.+")
     implementation(kotlin("stdlib"))
     implementation(files("lib/WayTrick-1.0.jar"))
 }
+
+java.toolchain.languageVersion.set(JavaLanguageVersion.of(25))
 
 tasks {
     shadowJar {
@@ -39,4 +40,4 @@ tasks {
     }
 }
 
-kotlin { jvmToolchain(21) }
+kotlin { jvmToolchain(25) }
